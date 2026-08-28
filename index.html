@@ -1118,451 +1118,293 @@
     </div>
     <script>
         var currentAgent = null;
+var currentHistory = [];
+var MAX_CLIENT_HISTORY = 20;
+var modalSession = 0;
+var isSending = false;
 
-        // Conversation memory for the currently open chat, oldest turn first.
-        // Reset every time a modal is (re)opened. Passed to the server on every
-        // send so the agent has context beyond just the latest message.
-        var currentHistory = [];
-        var MAX_CLIENT_HISTORY = 20; // ~10 exchanges; keep in sync with server MAX_HISTORY_TURNS
+var AGENT_META = {
+    Oliver: { icon: 'fas fa-handshake', color: '#ffaa00' },
+    Rhia: { icon: 'fas fa-heart', color: '#00f2ff' },
+    Sophie: { icon: 'fas fa-chart-line', color: '#39ff14' },
+    Froi: { icon: 'fas fa-project-diagram', color: '#bc13fe' },
+    Veron: { icon: 'fas fa-microphone-alt', color: '#ff3131' }
+};
 
-        // Bumped every time a modal is opened. Any in-flight request captures the
-        // value at send time; if it doesn't match modalSession when the response
-        // arrives, the chat has since been closed or switched to another agent,
-        // so the response is discarded instead of leaking into the wrong chat.
-        var modalSession = 0;
+var AGENT_OPTIONS = {
+    Oliver: [
+        { icon: 'fas fa-arrow-trend-down', label: 'Buyer lowballed my offer', prompt: "A buyer just came in with a lowball offer on a property. How do I respond and negotiate this up?" },
+        { icon: 'fas fa-lock', label: "Seller won't budge on price", prompt: "The seller is firm on their asking price and won't move. How do I approach this negotiation?" },
+        { icon: 'fas fa-users', label: 'Two buyers, one property', prompt: "I have two interested buyers on the same property. How do I handle this bidding situation fairly and effectively?" },
+        { icon: 'fas fa-file-signature', label: 'Presenting a below-asking offer', prompt: "I need to present a below-asking offer to a seller without offending them. How should I frame it?" },
+        { icon: 'fas fa-couch', label: 'Buyer wants extras thrown in free', prompt: "The buyer is asking me to throw in furniture and fixtures for free. How do I negotiate this?" }
+    ],
+    Rhia: [
+        { icon: 'fas fa-comment-dots', label: 'New buyer just messaged me', prompt: "A new buyer just messaged me for the first time. What should I ask them to understand their needs?" },
+        { icon: 'fas fa-heart-crack', label: 'Client is anxious about buying', prompt: "My client is a first-time home buyer and feels anxious about the whole process. How do I help them feel at ease?" },
+        { icon: 'fas fa-clock-rotate-left', label: 'Lead has gone quiet', prompt: "A lead I was talking to has gone quiet and stopped responding. How do I follow up without sounding pushy?" },
+        { icon: 'fas fa-house', label: 'Nervous seller, first listing', prompt: "I have a seller who is nervous about listing their home for the first time. How do I make them feel comfortable and confident in me?" }
+    ],
+    Sophie: [
+        { icon: 'fas fa-tags', label: 'How should I price my packages?', prompt: "How should I price my real estate service packages for sellers?" },
+        { icon: 'fas fa-percent', label: 'Should I lower my commission?', prompt: "I'm being asked to lower my commission to win a listing. Should I, and how do I handle this?" },
+        { icon: 'fas fa-layer-group', label: 'Build good-better-best packages', prompt: "Help me create good-better-best service packages for my seller clients." },
+        { icon: 'fas fa-camera', label: 'Upsell staging or photography', prompt: "How do I upsell home staging or professional photography to my seller clients?" }
+    ],
+    Froi: [
+        { icon: 'fas fa-bullhorn', label: 'How do I get more listing leads?', prompt: "How do I generate more listing leads as a real estate agent?" },
+        { icon: 'fas fa-people-arrows', label: 'Funnel for first-time buyers', prompt: "Help me plan a follow-up funnel for first-time home buyers, from first contact to closing." },
+        { icon: 'fas fa-snowflake', label: 'My leads have gone cold', prompt: "A batch of my leads have gone cold and stopped engaging. How do I re-engage them?" },
+        { icon: 'fas fa-ad', label: 'Plan a listing ad funnel', prompt: "What should my social media ad funnel look like for promoting a new listing?" }
+    ],
+    Veron: [
+        { icon: 'fas fa-briefcase', label: 'Build my listing presentation', prompt: "Help me build a strong listing presentation pitch for a potential seller." },
+        { icon: 'fas fa-door-open', label: 'Script my open house walkthrough', prompt: "Help me write a script for walking buyers through an open house." },
+        { icon: 'fas fa-handshake-angle', label: 'Close a seller on the fence', prompt: "I have a seller who is on the fence about listing with me. How do I close them?" },
+        { icon: 'fas fa-person-circle-question', label: 'Pitch to a hesitant buyer', prompt: "Help me structure a pitch for a buyer who is hesitant to make an offer." }
+    ]
+};
 
-        // True while a request to the agent is in flight. Prevents a second
-        // message from being sent (e.g. via Enter) before the first reply lands.
-        var isSending = false;
+function scrollToSpecialists() {
+    var target = document.getElementById('specialists');
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
-        /**
-         * Icon + neon color per agent, reused by the hero orbit nodes so
-         * tapping an orbiting dot opens the same modal as its dashboard card.
-         */
-        var AGENT_META = {
-            Oliver: {
-                icon: 'fas fa-handshake',
-                color: '#ffaa00'
-            },
-            Rhia: {
-                icon: 'fas fa-heart',
-                color: '#00f2ff'
-            },
-            Sophie: {
-                icon: 'fas fa-chart-line',
-                color: '#39ff14'
-            },
-            Froi: {
-                icon: 'fas fa-project-diagram',
-                color: '#bc13fe'
-            },
-            Veron: {
-                icon: 'fas fa-microphone-alt',
-                color: '#ff3131'
+function openModal(agentName, iconClass, neonColor) {
+    currentAgent = agentName;
+    currentHistory = [];
+    modalSession += 1;
+    isSending = false;
+
+    var overlay = document.getElementById('agentModal');
+    var modal = overlay.querySelector('.agent-modal');
+    var icon = document.getElementById('modalIcon');
+    var nameEl = document.getElementById('modalAgentName');
+    var messages = document.getElementById('modalMessages');
+    var input = document.getElementById('modalInput');
+
+    modal.style.setProperty('--modal-neon', neonColor);
+    icon.innerHTML = '<svg class="agent-avatar-img"><use href="#avatar-' + agentName.toLowerCase() + '"></use></svg>';
+    nameEl.textContent = agentName;
+    nameEl.style.color = neonColor;
+    nameEl.style.textShadow = '0 0 10px ' + neonColor;
+
+    messages.innerHTML = '';
+    input.value = '';
+
+    renderOptions(agentName);
+
+    overlay.classList.remove('hidden');
+    input.focus();
+
+    sendToAgent(agentName, '', messages);
+}
+
+function renderOptions(agentName) {
+    var optionsEl = document.getElementById('modalOptions');
+    var options = AGENT_OPTIONS[agentName] || [];
+
+    optionsEl.innerHTML = '';
+
+    if (!options.length) {
+        optionsEl.classList.add('hidden');
+        return;
+    }
+
+    optionsEl.classList.remove('hidden');
+
+    var labelEl = document.createElement('div');
+    labelEl.className = 'agent-modal-options-label';
+    labelEl.textContent = 'Or tap a common topic';
+    optionsEl.appendChild(labelEl);
+
+    options.forEach(function(opt) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'option-chip';
+        btn.innerHTML = '<i class="' + opt.icon + '"></i><span>' + opt.label + '</span>';
+        btn.onclick = function() { selectOption(opt); };
+        optionsEl.appendChild(btn);
+    });
+}
+
+function selectOption(opt) {
+    if (isSending) return;
+    var messages = document.getElementById('modalMessages');
+    appendBubble(messages, opt.label, 'user');
+    collapseOptions();
+    sendToAgent(currentAgent, opt.prompt, messages);
+}
+
+function collapseOptions() {
+    document.getElementById('modalOptions').classList.add('hidden');
+}
+
+function closeModal() {
+    document.getElementById('agentModal').classList.add('hidden');
+    currentAgent = null;
+}
+
+function sendModalMessage() {
+    if (isSending) return;
+
+    var input = document.getElementById('modalInput');
+    var messages = document.getElementById('modalMessages');
+    var text = input.value.trim();
+
+    if (!text || !currentAgent) return;
+
+    appendBubble(messages, text, 'user');
+    input.value = '';
+    collapseOptions();
+
+    sendToAgent(currentAgent, text, messages);
+}
+
+function sendToAgent(agentName, userText, messagesEl) {
+    var session = modalSession;
+    var historySnapshot = currentHistory.slice();
+
+    var loadingBubble = appendBubble(messagesEl, agentName + ' is thinking...', 'agent loading');
+    var sendBtn = document.getElementById('modalSend');
+    var inputEl = document.getElementById('modalInput');
+    var optionButtons = document.querySelectorAll('#modalOptions .option-chip');
+
+    isSending = true;
+    sendBtn.disabled = true;
+    if (inputEl) inputEl.disabled = true;
+    optionButtons.forEach(function(b) { b.disabled = true; });
+
+    const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwtkAr6qw1_ieMXnI1ufXKRc7PlrlF0694fnUOOnQrTf0SaVHRW02IcalyrObrrv06o/exec';
+
+    fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+            action: 'processAgentRequest',
+            agentName: agentName,
+            userMessage: userText,
+            history: historySnapshot
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+        }
+        return response.json();
+    })
+    .then(function(response) {
+        if (session !== modalSession) return;
+
+        loadingBubble.remove();
+        isSending = false;
+        sendBtn.disabled = false;
+        if (inputEl) { inputEl.disabled = false; inputEl.focus(); }
+        optionButtons.forEach(function(b) { b.disabled = false; });
+
+        if (response.success) {
+            appendBubble(messagesEl, response.message || 'No response received', 'agent');
+
+            if (userText) currentHistory.push({ role: 'user', content: userText });
+            currentHistory.push({ role: 'assistant', content: response.message || '' });
+            if (currentHistory.length > MAX_CLIENT_HISTORY) {
+                currentHistory = currentHistory.slice(currentHistory.length - MAX_CLIENT_HISTORY);
             }
-        };
-
-        /**
-         * Smoothly scrolls to the Specialists grid (used by the hero's
-         * "Explore Specialists" button).
-         */
-        function scrollToSpecialists() {
-            var target = document.getElementById('specialists');
-            if (target) target.scrollIntoView({
-                behavior: 'smooth',
-                block: 'start'
-            });
+        } else {
+            appendBubble(messagesEl, 'Error: ' + (response.message || 'Unknown error'), 'agent');
         }
+    })
+    .catch(function(error) {
+        if (session !== modalSession) return;
 
-        /**
-         * Quick-topic options per agent, scoped to real estate scenarios.
-         * "label" is what shows on the button (short, plain language).
-         * "prompt" is the fuller message actually sent to the AI agent.
-         * Keeping these short and specific means an older, busy agent can
-         * just tap instead of typing out a question.
-         */
-        var AGENT_OPTIONS = {
-            Oliver: [{
-                icon: 'fas fa-arrow-trend-down',
-                label: 'Buyer lowballed my offer',
-                prompt: "A buyer just came in with a lowball offer on a property. How do I respond and negotiate this up?"
-            }, {
-                icon: 'fas fa-lock',
-                label: "Seller won't budge on price",
-                prompt: "The seller is firm on their asking price and won't move. How do I approach this negotiation?"
-            }, {
-                icon: 'fas fa-users',
-                label: 'Two buyers, one property',
-                prompt: "I have two interested buyers on the same property. How do I handle this bidding situation fairly and effectively?"
-            }, {
-                icon: 'fas fa-file-signature',
-                label: 'Presenting a below-asking offer',
-                prompt: "I need to present a below-asking offer to a seller without offending them. How should I frame it?"
-            }, {
-                icon: 'fas fa-couch',
-                label: 'Buyer wants extras thrown in free',
-                prompt: "The buyer is asking me to throw in furniture and fixtures for free. How do I negotiate this?"
-            }],
+        loadingBubble.remove();
+        isSending = false;
+        sendBtn.disabled = false;
+        if (inputEl) { inputEl.disabled = false; inputEl.focus(); }
+        optionButtons.forEach(function(b) { b.disabled = false; });
 
-            Rhia: [{
-                icon: 'fas fa-comment-dots',
-                label: 'New buyer just messaged me',
-                prompt: "A new buyer just messaged me for the first time. What should I ask them to understand their needs?"
-            }, {
-                icon: 'fas fa-heart-crack',
-                label: 'Client is anxious about buying',
-                prompt: "My client is a first-time home buyer and feels anxious about the whole process. How do I help them feel at ease?"
-            }, {
-                icon: 'fas fa-clock-rotate-left',
-                label: 'Lead has gone quiet',
-                prompt: "A lead I was talking to has gone quiet and stopped responding. How do I follow up without sounding pushy?"
-            }, {
-                icon: 'fas fa-house',
-                label: 'Nervous seller, first listing',
-                prompt: "I have a seller who is nervous about listing their home for the first time. How do I make them feel comfortable and confident in me?"
-            }],
+        appendBubble(messagesEl, '⚠️ ' + (error.message || 'Network error. Please try again.'), 'agent');
+        console.error('Error:', error);
+    });
+}
 
-            Sophie: [{
-                icon: 'fas fa-tags',
-                label: 'How should I price my packages?',
-                prompt: "How should I price my real estate service packages for sellers?"
-            }, {
-                icon: 'fas fa-percent',
-                label: 'Should I lower my commission?',
-                prompt: "I'm being asked to lower my commission to win a listing. Should I, and how do I handle this?"
-            }, {
-                icon: 'fas fa-layer-group',
-                label: 'Build good-better-best packages',
-                prompt: "Help me create good-better-best service packages for my seller clients."
-            }, {
-                icon: 'fas fa-camera',
-                label: 'Upsell staging or photography',
-                prompt: "How do I upsell home staging or professional photography to my seller clients?"
-            }],
+function appendBubble(container, text, cssClass) {
+    var bubble = document.createElement('div');
+    bubble.className = 'chat-bubble ' + cssClass;
+    bubble.textContent = text;
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+    return bubble;
+}
 
-            Froi: [{
-                icon: 'fas fa-bullhorn',
-                label: 'How do I get more listing leads?',
-                prompt: "How do I generate more listing leads as a real estate agent?"
-            }, {
-                icon: 'fas fa-people-arrows',
-                label: 'Funnel for first-time buyers',
-                prompt: "Help me plan a follow-up funnel for first-time home buyers, from first contact to closing."
-            }, {
-                icon: 'fas fa-snowflake',
-                label: 'My leads have gone cold',
-                prompt: "A batch of my leads have gone cold and stopped engaging. How do I re-engage them?"
-            }, {
-                icon: 'fas fa-ad',
-                label: 'Plan a listing ad funnel',
-                prompt: "What should my social media ad funnel look like for promoting a new listing?"
-            }],
-
-            Veron: [{
-                icon: 'fas fa-briefcase',
-                label: 'Build my listing presentation',
-                prompt: "Help me build a strong listing presentation pitch for a potential seller."
-            }, {
-                icon: 'fas fa-door-open',
-                label: 'Script my open house walkthrough',
-                prompt: "Help me write a script for walking buyers through an open house."
-            }, {
-                icon: 'fas fa-handshake-angle',
-                label: 'Close a seller on the fence',
-                prompt: "I have a seller who is on the fence about listing with me. How do I close them?"
-            }, {
-                icon: 'fas fa-person-circle-question',
-                label: 'Pitch to a hesitant buyer',
-                prompt: "Help me structure a pitch for a buyer who is hesitant to make an offer."
-            }]
-        };
-
-        /**
-         * Opens the chat modal for a given agent, renders that agent's
-         * quick-topic options, and sends an initial greeting request so
-         * the agent introduces itself.
-         */
-        function openModal(agentName, iconClass, neonColor) {
-            currentAgent = agentName;
-            currentHistory = [];
-            modalSession += 1;
-            isSending = false;
-
-            var overlay = document.getElementById('agentModal');
-            var modal = overlay.querySelector('.agent-modal');
-            var icon = document.getElementById('modalIcon');
-            var nameEl = document.getElementById('modalAgentName');
-            var messages = document.getElementById('modalMessages');
-            var input = document.getElementById('modalInput');
-
-            modal.style.setProperty('--modal-neon', neonColor);
-            icon.innerHTML = '<svg class="agent-avatar-img"><use href="#avatar-' + agentName.toLowerCase() + '"></use></svg>';
-            nameEl.textContent = agentName;
-            nameEl.style.color = neonColor;
-            nameEl.style.textShadow = '0 0 10px ' + neonColor;
-
-            messages.innerHTML = '';
-            input.value = '';
-
-            renderOptions(agentName);
-
-            overlay.classList.remove('hidden');
-            input.focus();
-
-            // Kick off with a greeting from the agent.
-            sendToAgent(agentName, '', messages);
+// DOMContentLoaded setup
+document.addEventListener('DOMContentLoaded', function() {
+    var cards = document.querySelectorAll('.agent-card');
+    cards.forEach(function(card, index) {
+        if (!card.style.getPropertyValue('--delay')) {
+            card.style.setProperty('--delay', (0.1 * (index + 1)) + 's');
         }
+    });
 
-        /**
-         * Renders the quick-topic buttons for the given agent inside the modal.
-         */
-        function renderOptions(agentName) {
-            var optionsEl = document.getElementById('modalOptions');
-            var options = AGENT_OPTIONS[agentName] || [];
-
-            optionsEl.innerHTML = '';
-
-            if (!options.length) {
-                optionsEl.classList.add('hidden');
-                return;
-            }
-
-            optionsEl.classList.remove('hidden');
-
-            var labelEl = document.createElement('div');
-            labelEl.className = 'agent-modal-options-label';
-            labelEl.textContent = 'Or tap a common topic';
-            optionsEl.appendChild(labelEl);
-
-            options.forEach(function(opt) {
-                var btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'option-chip';
-                btn.innerHTML = '<i class="' + opt.icon + '"></i><span>' + opt.label + '</span>';
-                btn.onclick = function() {
-                    selectOption(opt);
-                };
-                optionsEl.appendChild(btn);
-            });
-        }
-
-        /**
-         * Handles a tap on a quick-topic option: shows it in the chat like a
-         * normal user message, and sends the fuller prompt text to the agent.
-         */
-        function selectOption(opt) {
-            if (isSending) return;
-            var messages = document.getElementById('modalMessages');
-            appendBubble(messages, opt.label, 'user');
-            collapseOptions();
-            sendToAgent(currentAgent, opt.prompt, messages);
-        }
-
-        /**
-         * Hides the quick-topic buttons once the conversation has started,
-         * so the chat has more room. They come back the next time the
-         * modal is opened.
-         */
-        function collapseOptions() {
-            document.getElementById('modalOptions').classList.add('hidden');
-        }
-
-        function closeModal() {
-            document.getElementById('agentModal').classList.add('hidden');
-            currentAgent = null;
-        }
-
-        function sendModalMessage() {
-            if (isSending) return;
-
-            var input = document.getElementById('modalInput');
-            var messages = document.getElementById('modalMessages');
-            var text = input.value.trim();
-
-            if (!text || !currentAgent) return;
-
-            appendBubble(messages, text, 'user');
-            input.value = '';
-            collapseOptions();
-
-            sendToAgent(currentAgent, text, messages);
-        }
-
-        function sendToAgent(agentName, userText, messagesEl) {
-            var session = modalSession;
-            var historySnapshot = currentHistory.slice();
-
-            var loadingBubble = appendBubble(messagesEl, agentName + ' is thinking...', 'agent loading');
-            var sendBtn = document.getElementById('modalSend');
-            var inputEl = document.getElementById('modalInput');
-            var optionButtons = document.querySelectorAll('#modalOptions .option-chip');
-
-            isSending = true;
-            sendBtn.disabled = true;
-            if (inputEl) inputEl.disabled = true;
-            optionButtons.forEach(function(b) {
-                b.disabled = true;
-            });
-
-            // Use your Web App URL here
-            const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwtkAr6qw1_ieMXnI1ufXKRc7PlrlF0694fnUOOnQrTf0SaVHRW02IcalyrObrrv06o/exec';
-
-            fetch(SCRIPT_URL, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'text/plain;charset=utf-8'
-                        },
-                        body: JSON.stringify({
-                            action: 'processAgentRequest',
-                            agentName: agentName,
-                            userMessage: userText,
-                            history: historySnapshot
-                        })
-                    })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
-                    }
-                    return response.json();
-                })
-                .then(function(response) {
-                    if (session !== modalSession) return;
-
-                    loadingBubble.remove();
-                    isSending = false;
-                    sendBtn.disabled = false;
-                    if (inputEl) {
-                        inputEl.disabled = false;
-                        inputEl.focus();
-                    }
-                    optionButtons.forEach(function(b) {
-                        b.disabled = false;
-                    });
-
-                    if (response.success) {
-                        appendBubble(messagesEl, response.message || 'No response received', 'agent');
-
-                        if (userText) currentHistory.push({
-                            role: 'user',
-                            content: userText
-                        });
-                        currentHistory.push({
-                            role: 'assistant',
-                            content: response.message || ''
-                        });
-                        if (currentHistory.length > MAX_CLIENT_HISTORY) {
-                            currentHistory = currentHistory.slice(currentHistory.length - MAX_CLIENT_HISTORY);
-                        }
-                    } else {
-                        appendBubble(messagesEl, 'Error: ' + (response.message || 'Unknown error'), 'agent');
-                    }
-                })
-                .catch(function(error) {
-                    if (session !== modalSession) return;
-
-                    loadingBubble.remove();
-                    isSending = false;
-                    sendBtn.disabled = false;
-                    if (inputEl) {
-                        inputEl.disabled = false;
-                        inputEl.focus();
-                    }
-                    optionButtons.forEach(function(b) {
-                        b.disabled = false;
-                    });
-
-                    appendBubble(messagesEl, '⚠️ ' + (error.message || 'Network error. Please try again.'), 'agent');
-                    console.error('Error:', error);
-                });
-        }
-
-        function appendBubble(container, text, cssClass) {
-            var bubble = document.createElement('div');
-            bubble.className = 'chat-bubble ' + cssClass;
-            bubble.textContent = text;
-            container.appendChild(bubble);
-            container.scrollTop = container.scrollHeight;
-            return bubble;
-        }
-
-        // Allow Enter to send, Shift+Enter for newline
-        document.addEventListener('DOMContentLoaded', function() {
-            var cards = document.querySelectorAll('.agent-card');
-            cards.forEach(function(card, index) {
-                if (!card.style.getPropertyValue('--delay')) {
-                    card.style.setProperty('--delay', (0.1 * (index + 1)) + 's');
-                }
-            });
-
-            var input = document.getElementById('modalInput');
-            if (input) {
-                input.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        sendModalMessage();
-                    }
-                });
-            }
-
-            var overlay = document.getElementById('agentModal');
-            if (overlay) {
-                overlay.addEventListener('click', function(e) {
-                    if (e.target === overlay) closeModal();
-                });
-            }
-
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape' && overlay && !overlay.classList.contains('hidden')) {
-                    closeModal();
-                }
-            });
-
-            // With <base target="_top"> in play (needed for google.script.run to
-            // behave correctly), plain <a href="#section"> links try to navigate
-            // the top-level window instead of scrolling within the page — inside
-            // the Apps Script iframe wrapper that just reloads the app instead of
-            // landing on the anchor. Intercept same-page hash links and scroll
-            // to them manually instead.
-            document.querySelectorAll('a[href^="#"]').forEach(function(link) {
-                link.addEventListener('click', function(e) {
-                    var id = link.getAttribute('href').slice(1);
-                    if (!id) return;
-                    var target = document.getElementById(id);
-                    if (!target) return;
-                    e.preventDefault();
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
-                });
-            });
-
-            // Hero orbit-core: tapping (or Enter/Space on) an orbiting node
-            // opens that agent's chat, same as its dashboard card button.
-            var orbitNodes = document.querySelectorAll('.orbit-rotator');
-            orbitNodes.forEach(function(node) {
-                var agentName = node.getAttribute('data-agent');
-                var meta = AGENT_META[agentName];
-                if (!meta) return;
-
-                node.addEventListener('click', function() {
-                    openModal(agentName, meta.icon, meta.color);
-                });
-                node.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        openModal(agentName, meta.icon, meta.color);
-                    }
-                });
-            });
-
-            // Pause ambient hero animations for users who prefer reduced motion.
-            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-                document.querySelectorAll('.orbit-rotator, .particle, .core-circle').forEach(function(el) {
-                    el.style.animation = 'none';
-                });
+    var input = document.getElementById('modalInput');
+    if (input) {
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendModalMessage();
             }
         });
+    }
+
+    var overlay = document.getElementById('agentModal');
+    if (overlay) {
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) closeModal();
+        });
+    }
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && overlay && !overlay.classList.contains('hidden')) {
+            closeModal();
+        }
+    });
+
+    // Intercept hash links for smooth scrolling
+    document.querySelectorAll('a[href^="#"]').forEach(function(link) {
+        link.addEventListener('click', function(e) {
+            var id = link.getAttribute('href').slice(1);
+            if (!id) return;
+            var target = document.getElementById(id);
+            if (!target) return;
+            e.preventDefault();
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+
+    // Hero orbit nodes
+    var orbitNodes = document.querySelectorAll('.orbit-rotator');
+    orbitNodes.forEach(function(node) {
+        var agentName = node.getAttribute('data-agent');
+        var meta = AGENT_META[agentName];
+        if (!meta) return;
+
+        node.addEventListener('click', function() {
+            openModal(agentName, meta.icon, meta.color);
+        });
+        node.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openModal(agentName, meta.icon, meta.color);
+            }
+        });
+    });
+
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        document.querySelectorAll('.orbit-rotator, .particle, .core-circle').forEach(function(el) {
+            el.style.animation = 'none';
+        });
+    }
+});
     </script>
 </body>
 
