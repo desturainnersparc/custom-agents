@@ -1412,13 +1412,13 @@
                         headers: {
                             'Content-Type': 'text/plain;charset=utf-8'
                         },
-                        body: JSON.stringify
-                        action: 'processAgentRequest',
-                        agentName: agentName,
-                        userMessage: userText,
-                        history: historySnapshot
+                        body: JSON.stringify({
+                            action: 'processAgentRequest',
+                            agentName: agentName,
+                            userMessage: userText,
+                            history: historySnapshot
+                        })
                     })
-                })
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('HTTP ' + response.status + ': ' + response.statusText);
