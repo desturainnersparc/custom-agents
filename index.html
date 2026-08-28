@@ -1408,11 +1408,11 @@
             const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwtkAr6qw1_ieMXnI1ufXKRc7PlrlF0694fnUOOnQrTf0SaVHRW02IcalyrObrrv06o/exec';
 
             fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'text/plain;charset=utf-8'
+                        },
+                        body: JSON.stringify
                         action: 'processAgentRequest',
                         agentName: agentName,
                         userMessage: userText,
